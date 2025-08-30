@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyWhoosh Training Planner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        let trainingPlan = {};
+        let tempWorkout = {}; // Temporary storage for workout details before RPE is submitted
+
+        // A simple data structure to store workout types and their associated Training Stress Score (TSS)
+        // These are made up values for a simplified fatigue model
+        const workoutTss = {
+            'Zone 1/2 Ride': 20,
+            'Zone 2/Tempo Ride': 40,
+            'Sweet Spot/Threshold Intervals': 60,
+            'Zone 2 Ride': 30,
+            'Long Endurance Ride': 80,
+            'Recovery/Endurance Ride': 25,
+            'Threshold Intervals': 70,
+            'VO2 Max Intervals': 85,
+            'Threshold Ride': 75,
+            'Over-Unders': 80,
+            'Race Simulation Ride': 120,
+            'Opener': 15
+        };
+        
+        // Define fatigue thresholds for the visual indicator
+        const FATIGUE_THRESHOLDS = {
+            low: 40,
+            optimal: 80,
+        };
+
+        // Initialize the app and set up listeners
+        function initApp() {
+            // Use event delegation for dynamically added workout buttons
+            document.getElementById('planner').addEventListener('click', (event) => {
+                const button = event.target.closest('button');
+                if (button && button.dataset.dayIndex) {
+                    handleWorkoutCompletion(event);
+                }
+            });
+
+            // Attach event listeners to buttons that are always in the HTML
+            document.getElementById('updateFtpBtn').addEventListener('click', handleUpdateProfile);
+            document.getElementById('submitRpeBtn').addEventListener('click', submitRPE);
+
+            // Create and render the initial plan
+            trainingPlan = createDefaultPlan();
+            renderPlanner(trainingPlan);
+        }
+
+        // Creates the default training plan structure
+        function createDefaultPlan() {
+            const startDate = new Date('2025-08-30T00:00:00.000Z'); // Fixed start date for demonstration
+            const plan = {
+                name: "Your Name",
+                ftp: 160,
+                startDate: startDate.toISOString(),
+                weeks: [
+                    // Weeks 1-4: Base Building
+                    { name: 'Weeks 1-4: Base Building', days: getBaseBuildingWorkouts() },
+                    { name: 'Weeks 5-8: Build Phase', days: getBuildPhaseWorkouts() },
+                    { name: 'Weeks 9-11: Peak Phase', days: getPeakPhaseWorkouts() },
+                    { name: 'Week 12: Taper Week', days: getTaperWeekWorkouts() }
+                ],
+                completedWorkouts: {}, // Key: dayIndex, Value: true
+                fatigueScores: {} // Key: dayIndex, Value: {tss: number, rpe: number}
+            };
+            return plan;
+        }
+
+        function getBaseBuildingWorkouts() {
+            return [
+                { day: 'Monday', workout: 'Rest or Active Recovery' },
+                { day: 'Tuesday', workout: 'Zone 2/Tempo Ride', details: '3 x 10-12 minutes in Zone 3 with 5 min recovery in Zone 2.' },
+                { day: 'Wednesday', workout: 'Sweet Spot/Threshold Intervals', details: '4 x 5 minutes at 90-100% of FTP with 5 min recovery in Zone 2.' },
+                { day: 'Thursday', workout: 'Zone 2 Ride', details: 'A simple endurance ride. Focus on a steady power output.' },
+                { day: 'Friday', workout: 'Rest' },
+                { day: 'Saturday', workout: 'Long Endurance Ride', details: '2-3 hours outdoors in Zone 2. Practice nutrition and hydration.' },
+                { day: 'Sunday', workout: 'Recovery/Endurance Ride', details: '90 minutes light spin in Zone 2.' }
+            ];
+        }
+
+        function getBuildPhaseWorkouts() {
+            return [
+                { day: 'Monday', workout: 'Rest or Active Recovery' },
+                { day: 'Tuesday', workout: 'Threshold Intervals', details: '2-3 x 10 minutes at 100-105% of FTP with 5-10 min Zone 2 recovery.' },
+                { day: 'Wednesday', workout: 'VO2 Max Intervals', details: '5 x 3 minutes at 110-120% of FTP with 3 min Zone 1 recovery.' },
+                { day: 'Thursday', workout: 'Zone 2 Ride', details: 'A simple endurance ride.' },
+                { day: 'Friday', workout: 'Rest' },
+                { day: 'Saturday', workout: 'Long Endurance Ride', details: '3-4 hours outdoors in Zone 2. Build duration.' },
+                { day: 'Sunday', workout: 'Recovery/Endurance Ride', details: '90-120 minutes, keep it light.' }
+            ];
+        }
+
+        function getPeakPhaseWorkouts() {
+            return [
+                { day: 'Monday', workout: 'Rest' },
+                { day: 'Tuesday', workout: 'Threshold Ride', details: '2 x 15 minutes at 100% of FTP with 10 min Zone 2 recovery.' },
+                { day: 'Wednesday', workout: 'Over-Unders', details: '3-4 x 8 minutes alternating between 105% and 95% FTP.' },
+                { day: 'Thursday', workout: 'Zone 2 Ride', details: 'A simple endurance ride.' },
+                { day: 'Friday', workout: 'Rest' },
+                { day: 'Saturday', workout: 'Race Simulation Ride', details: '4-5 hours, at least 150 km. Practice race-day strategy.' },
+                { day: 'Sunday', workout: 'Recovery Ride', details: '90 minutes light spin.' }
+            ];
+        }
+
+        function getTaperWeekWorkouts() {
+            return [
+                { day: 'Monday', workout: 'Rest' },
+                { day: 'Tuesday', workout: 'Opener', details: '3-4 x 1-minute efforts at FTP.' },
+                { day: 'Wednesday', workout: 'Rest' },
+                { day: 'Thursday', workout: 'Very easy spin' },
+                { day: 'Friday', workout: 'Rest' },
+                { day: 'Saturday', workout: 'Final gear check, eat well, hydrate.' },
+                { day: 'Sunday', workout: 'RACE DAY!' }
+            ];
+        }
+
+        // Renders the entire planner UI
+        function renderPlanner(data) {
+            const plannerDiv = document.getElementById('planner');
+            const ftp = data.ftp || 160;
+
+            // Calculate and display zones based on FTP
+            document.getElementById('ftpInput').value = ftp;
+            document.getElementById('zones').innerHTML = `
+                <p><strong>Zone 1 (Active Recovery):</strong> < ${Math.round(ftp * 0.56)}W</p>
+                <p><strong>Zone 2 (Endurance):</strong> ${Math.round(ftp * 0.56)}W - ${Math.round(ftp * 0.75)}W</p>
+                <p><strong>Zone 3 (Tempo):</strong> ${Math.round(ftp * 0.75)}W - ${Math.round(ftp * 0.9)}W</p>
+                <p><strong>Zone 4 (Threshold):</strong> ${Math.round(ftp * 0.9)}W - ${Math.round(ftp * 1.05)}W</p>
+                <p><strong>Zone 5 (VO2 Max):</strong> > ${Math.round(ftp * 1.05)}W</p>
+            `;
+            
+            // Calculate fatigue and freshness scores
+            const { fatigueScore, freshnessScore, totalKms, totalPower, weeklyKms, weeklyFatigueScores } = calculateFatigue(data);
+            
+            // Determine fatigue status and color based on thresholds
+            let fatigueStatus = '';
+            let fatigueColor = '';
+            if (fatigueScore < FATIGUE_THRESHOLDS.low) {
+                fatigueStatus = 'Low';
+                fatigueColor = 'bg-green-500';
+            } else if (fatigueScore < FATIGUE_THRESHOLDS.optimal) {
+                fatigueStatus = 'Optimal';
+                fatigueColor = 'bg-yellow-500';
+            } else {
+                fatigueStatus = 'High';
+                fatigueColor = 'bg-red-500';
+            }
+
+            // Update fatigue score with indicator
+            document.getElementById('fatigueScore').innerHTML = `
+                <span id="fatigueIndicator" class="inline-block w-4 h-4 rounded-full mr-2 ${fatigueColor}"></span>
+                ${fatigueScore.toFixed(0)}
+            `;
+            document.getElementById('freshnessScore').textContent = `Freshness: ${freshnessScore.toFixed(0)}`;
+            document.getElementById('totalKms').textContent = `Total KMs: ${totalKms.toFixed(1)}`;
+            document.getElementById('totalPower').textContent = `Total Power: ${totalPower.toFixed(0)} W`;
+
+            plannerDiv.innerHTML = ''; // Clear previous content
+
+            let dayCounter = 0;
+            data.weeks.forEach((week, weekIndex) => {
+                const weekDiv = document.createElement('div');
+                weekDiv.className = 'week mb-8 p-4 bg-white/5 rounded-2xl shadow-xl backdrop-blur-sm';
+                weekDiv.innerHTML = `<h2 class="text-xl md:text-2xl font-semibold mb-4 text-orange-400">${week.name}</h2>`;
+                
+                week.days.forEach((day, dayIndexInWeek) => {
+                    const totalDayIndex = (weekIndex * 7) + dayIndexInWeek;
+                    const completedData = data.fatigueScores[totalDayIndex];
+                    const isCompleted = !!completedData;
+                    const workoutClass = isCompleted ? 'bg-green-700/50' : 'bg-slate-700/50';
+
+                    const dayDiv = document.createElement('div');
+                    dayDiv.className = `day p-4 mb-2 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between ${workoutClass}`;
+                    
+                    const workoutText = day.details ? `<strong>${day.workout}</strong><br><span class="text-sm opacity-80">${day.details}</span>` : `<strong>${day.workout}</strong>`;
+                    
+                    let buttonContent = isCompleted ? `Completed (RPE: ${completedData.rpe})` : 'Complete';
+                    let buttonClass = isCompleted ? 'bg-orange-500 hover:bg-orange-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600';
+                    let disabledAttribute = isCompleted ? 'disabled' : '';
+
+                    dayDiv.innerHTML = `
+                        <div>
+                            <p class="font-medium text-lg">${day.day}</p>
+                            <p class="text-slate-300">${workoutText}</p>
+                            ${isCompleted ? `<p class="text-xs mt-2 opacity-80">KM: ${completedData.kms.toFixed(1)}, Power: ${completedData.avgPower.toFixed(0)}W</p>` : ''}
+                        </div>
+                        <button class="mt-4 md:mt-0 px-6 py-2 rounded-full font-bold transition-all duration-300 transform active:scale-95 ${buttonClass}"
+                            data-day-index="${totalDayIndex}"
+                            data-workout-type="${day.workout.replace(/<[^>]*>?/gm, '').trim()}"
+                            ${disabledAttribute}>
+                            ${buttonContent}
+                        </button>
+                    `;
+                    weekDiv.appendChild(dayDiv);
+                });
+                plannerDiv.appendChild(weekDiv);
+            });
+            
+            // NOTE: The event listeners are now attached using event delegation in initApp()
+            // to avoid adding them repeatedly.
+            renderCharts(weeklyKms, weeklyFatigueScores);
+        }
+
+        // Handles marking a workout as complete
+        function handleWorkoutCompletion(event) {
+            const button = event.target.closest('button');
+            tempWorkout.dayIndex = button.dataset.dayIndex;
+            tempWorkout.workoutType = button.dataset.workoutType;
+
+            // Show the RPE modal
+            document.getElementById('rpeModal').classList.remove('hidden');
+        }
+
+        // Handles the submission of the RPE from the modal
+        function submitRPE() {
+            const rpe = parseInt(document.getElementById('rpeSelect').value, 10);
+            const kms = parseFloat(document.getElementById('kmsInput').value);
+            const avgPower = parseInt(document.getElementById('powerInput').value, 10);
+
+            if (isNaN(rpe) || rpe < 1 || rpe > 10 || isNaN(kms) || kms < 0 || isNaN(avgPower) || avgPower < 0) {
+                // Use a simple message box instead of alert()
+                document.getElementById('rpeModal').classList.add('hidden');
+                document.getElementById('statusMessage').textContent = 'Please enter valid numbers.';
+                setTimeout(() => document.getElementById('statusMessage').textContent = '', 3000);
+                return;
+            }
+
+            // Calculate the adjusted TSS based on RPE.
+            // A simple linear scaling where a neutral RPE (5) keeps the TSS the same.
+            const baseTss = workoutTss[tempWorkout.workoutType] || 0;
+            const adjustedTss = baseTss * (1 + (rpe - 5) * 0.1);
+
+            if (!trainingPlan.fatigueScores) {
+                trainingPlan.fatigueScores = {};
+            }
+            trainingPlan.fatigueScores[tempWorkout.dayIndex] = { tss: adjustedTss, rpe: rpe, kms: kms, avgPower: avgPower };
+            
+            console.log(`Workout for day ${tempWorkout.dayIndex} completed with RPE ${rpe}, KMs ${kms}, and Power ${avgPower}.`);
+            
+            renderPlanner(trainingPlan);
+
+            // Hide the modal
+            document.getElementById('rpeModal').classList.add('hidden');
+        }
+
+        // Simple fatigue and freshness calculation, now also returns data for charts
+        function calculateFatigue(data) {
+            if (!data || typeof data !== 'object' || !data.fatigueScores || typeof data.fatigueScores !== 'object') {
+                return { fatigueScore: 0, freshnessScore: 0, totalKms: 0, totalPower: 0, weeklyKms: [], weeklyFatigueScores: [] };
+            }
+
+            const dailyFatigue = {};
+            const fatigueDecay = 0.95;
+            let totalKms = 0;
+            let totalPower = 0;
+            let workoutsWithPower = 0;
+            
+            let currentFatigue = 0;
+            const numDays = data.weeks.reduce((acc, week) => acc + week.days.length, 0);
+            
+            // First pass: calculate daily accumulated fatigue and totals
+            for (let i = 0; i < numDays; i++) {
+                currentFatigue = currentFatigue * fatigueDecay;
+                const dailyData = data.fatigueScores[i];
+
+                if (dailyData) {
+                    currentFatigue += dailyData.tss;
+                    totalKms += dailyData.kms;
+                    if (dailyData.avgPower > 0) {
+                         totalPower += dailyData.avgPower;
+                         workoutsWithPower++;
+                    }
+                }
+                dailyFatigue[i] = currentFatigue;
+            }
+
+            // Second pass: aggregate into weekly data for charts
+            const weeklyKms = [];
+            const weeklyFatigueScores = [];
+            let currentWeekKms = 0;
+            let currentWeekTss = 0;
+            
+            for (let i = 0; i < numDays; i++) {
+                const dailyData = data.fatigueScores[i];
+                if (dailyData) {
+                    currentWeekKms += dailyData.kms;
+                    currentWeekTss += dailyData.tss;
+                }
+
+                // Check for end of a full week or end of the entire plan
+                if ((i + 1) % 7 === 0 || i === numDays - 1) {
+                    weeklyKms.push(currentWeekKms);
+                    weeklyFatigueScores.push(currentWeekTss / 7);
+                    currentWeekKms = 0;
+                    currentWeekTss = 0;
+                }
+            }
+
+            const completedDays = Object.keys(data.fatigueScores);
+            const currentDay = completedDays.length > 0 ? Math.max(...completedDays.map(Number)) : -1;
+
+            let shortTermFatigue = 0;
+            for (let i = currentDay; i > Math.max(-1, currentDay - 7); i--) {
+                shortTermFatigue += dailyFatigue[i] || 0;
+            }
+
+            let longTermFatigue = 0;
+            for (let i = currentDay; i > Math.max(-1, currentDay - 42); i--) {
+                longTermFatigue += (dailyFatigue[i] || 0) * (1 - (i / 42));
+            }
+
+            const fatigueScore = shortTermFatigue / 7;
+            const freshnessScore = (longTermFatigue / 42) - fatigueScore;
+
+            const totalAvgPower = workoutsWithPower > 0 ? totalPower / workoutsWithPower : 0;
+
+            return { fatigueScore, freshnessScore, totalKms, totalPower: totalAvgPower, weeklyKms, weeklyFatigueScores };
+        }
+
+        // Render the charts
+        function renderCharts(weeklyKms, weeklyFatigueScores) {
+            const labels = weeklyKms.map((_, i) => `Week ${i + 1}`);
+
+            // Get existing chart instances and destroy them to prevent redraw issues
+            const existingKmsChart = Chart.getChart("kmsChart");
+            if (existingKmsChart) existingKmsChart.destroy();
+            const existingFatigueChart = Chart.getChart("fatigueChart");
+            if (existingFatigueChart) existingFatigueChart.destroy();
+
+            // Cumulative Kilometers Chart
+            const kmsCtx = document.getElementById('kmsChart').getContext('2d');
+            new Chart(kmsCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Total KMs per Week',
+                        data: weeklyKms,
+                        backgroundColor: 'rgba(251, 146, 60, 0.2)',
+                        borderColor: 'rgb(251, 146, 60)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { color: 'white' },
+                            title: { display: true, text: 'Kilometers', color: 'white' }
+                        },
+                        x: {
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { color: 'white' }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        title: { display: true, text: 'Weekly Kilometers', color: 'white' }
+                    }
+                }
+            });
+
+            // Weekly Fatigue Score Chart
+            const fatigueCtx = document.getElementById('fatigueChart').getContext('2d');
+            new Chart(fatigueCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Weekly Fatigue Score (TSS)',
+                        data: weeklyFatigueScores,
+                        backgroundColor: 'rgba(52, 211, 153, 0.2)',
+                        borderColor: 'rgb(52, 211, 153)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { color: 'white' },
+                            title: { display: true, text: 'Fatigue Score', color: 'white' }
+                        },
+                        x: {
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { color: 'white' }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        title: { display: true, text: 'Weekly Fatigue Score', color: 'white' }
+                    }
+                }
+            });
+        }
+
+        // Handle FTP updates from the form
+        function handleUpdateProfile() {
+            const newFtp = parseInt(document.getElementById('ftpInput').value, 10);
+            
+            if (isNaN(newFtp) || newFtp <= 0) {
+                 document.getElementById('statusMessage').textContent = 'Please enter a valid FTP.';
+                setTimeout(() => document.getElementById('statusMessage').textContent = '', 3000);
+                return;
+            }
+
+            trainingPlan.ftp = newFtp;
+            console.log("FTP updated successfully!");
+            renderPlanner(trainingPlan);
+        }
+        
+        window.onload = initApp;
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(to bottom right, #1f2937, #0f172a);
+            color: #f3f4f6;
+            min-height: 100vh;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: #4b5563;
+            border-radius: 4px;
+        }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.75);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal {
+            background-color: #1f2937;
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            max-width: 90%;
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="container mx-auto max-w-4xl">
+        <!-- Header Section -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-amber-500 animate-pulse">
+                Training Planner
+            </h1>
+            <p id="statusMessage" class="mt-4 text-sm text-yellow-400"></p>
+        </header>
+        
+        <!-- Dashboard Section -->
+        <div class="bg-white/5 rounded-2xl shadow-xl backdrop-blur-sm p-6 mb-8 border border-white/10">
+            <h2 class="text-2xl font-semibold mb-4 text-orange-400">Your Stats</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-slate-700/50 p-4 rounded-xl shadow-inner">
+                    <label for="ftpInput" class="block font-medium mb-2">Current FTP (Watts):</label>
+                    <div class="flex items-center space-x-2">
+                        <input type="number" id="ftpInput" class="w-full px-3 py-2 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" value="160">
+                        <button id="updateFtpBtn" class="px-4 py-2 bg-orange-500 rounded-full font-bold text-white hover:bg-orange-600 transition-colors">Update</button>
+                    </div>
+                </div>
+                <div class="bg-slate-700/50 p-4 rounded-xl shadow-inner">
+                    <h3 class="font-medium text-lg mb-2">Training Zones</h3>
+                    <div id="zones" class="space-y-1 text-sm">
+                        <!-- Zones will be dynamically injected here -->
+                    </div>
+                </div>
+            </div>
+            <div class="mt-6 flex flex-col md:flex-row justify-around items-center space-y-4 md:space-y-0 md:space-x-4 text-center">
+                <div class="w-full p-4 bg-slate-700/50 rounded-xl shadow-inner">
+                    <p class="font-medium text-lg text-orange-400">Current Fatigue</p>
+                    <p id="fatigueScore" class="text-3xl font-bold mt-2 text-white">-</p>
+                </div>
+                <div class="w-full p-4 bg-slate-700/50 rounded-xl shadow-inner">
+                    <p class="font-medium text-lg text-orange-400">Current Freshness</p>
+                    <p id="freshnessScore" class="text-3xl font-bold mt-2 text-white">-</p>
+                </div>
+            </div>
+            <div class="mt-6 flex flex-col md:flex-row justify-around items-center space-y-4 md:space-y-0 md:space-x-4 text-center">
+                <div class="w-full p-4 bg-slate-700/50 rounded-xl shadow-inner">
+                    <p class="font-medium text-lg text-orange-400">Total Kilometers</p>
+                    <p id="totalKms" class="text-3xl font-bold mt-2 text-white">-</p>
+                </div>
+                <div class="w-full p-4 bg-slate-700/50 rounded-xl shadow-inner">
+                    <p class="font-medium text-lg text-orange-400">Total Power</p>
+                    <p id="totalPower" class="text-3xl font-bold mt-2 text-white">-</p>
+                </div>
+            </div>
+            
+            <!-- Chart Section -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+                <div class="bg-slate-700/50 p-4 rounded-xl shadow-inner flex flex-col items-center">
+                    <canvas id="kmsChart"></canvas>
+                </div>
+                <div class="bg-slate-700/50 p-4 rounded-xl shadow-inner flex flex-col items-center">
+                    <canvas id="fatigueChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Training Plan Section -->
+        <div id="planner">
+            <!-- The training plan will be dynamically generated here -->
+            <div class="animate-pulse flex flex-col items-center justify-center p-8 bg-white/5 rounded-2xl">
+                <div class="h-6 w-48 bg-slate-700 rounded mb-4"></div>
+                <div class="h-4 w-32 bg-slate-700 rounded"></div>
+            </div>
+        </div>
+
+        <!-- RPE Modal -->
+        <div id="rpeModal" class="modal-overlay hidden">
+            <div class="modal">
+                <h3 class="text-xl font-semibold mb-4">Log Workout Details</h3>
+                <p class="text-slate-300 mb-4">Tell us about your ride.</p>
+                <div class="space-y-4">
+                    <div>
+                        <label for="rpeSelect" class="block text-left font-medium mb-1">Perceived Effort (RPE 1-10)</label>
+                        <select id="rpeSelect" class="w-full px-3 py-2 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                            <option value="1">1 - Very, very easy</option>
+                            <option value="2">2 - Easy</option>
+                            <option value="3">3 - Moderate</option>
+                            <option value="4">4 - Somewhat hard</option>
+                            <option value="5">5 - Hard</option>
+                            <option value="6">6 - Very hard</option>
+                            <option value="7">7 - Extremely hard</option>
+                            <option value="8">8 - All out</option>
+                            <option value="9">9 - Max effort</option>
+                            <option value="10">10 - Maximal effort</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="kmsInput" class="block text-left font-medium mb-1">Kilometers (KM)</label>
+                        <input type="number" id="kmsInput" class="w-full px-3 py-2 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" placeholder="e.g. 35.5">
+                    </div>
+                    <div>
+                        <label for="powerInput" class="block text-left font-medium mb-1">Average Power (W)</label>
+                        <input type="number" id="powerInput" class="w-full px-3 py-2 bg-slate-800 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" placeholder="e.g. 210">
+                    </div>
+                </div>
+                <button id="submitRpeBtn" class="mt-6 w-full px-6 py-3 rounded-full font-bold text-white bg-green-500 hover:bg-green-600 transition-colors">Submit</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
